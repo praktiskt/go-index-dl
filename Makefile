@@ -2,7 +2,7 @@
 
 
 build:
-	CGO_ENABLED=0 go build -o go-index-dl
+	bash hack/build.sh
 
 test:
 	go test -short ./.../
