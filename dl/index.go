@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -23,37 +24,62 @@ func (m Module) BaseURL() string {
 	return fmt.Sprintf("%s/%s/@v/%s", GO_PROXY, m.Path, m.Version)
 }
 
-type IndexClient struct {
-	BaseUrl          string
-	useMinTsFromFile bool
-	minTs            time.Time
+func (m Module) AsJSON() string {
+	b, err := json.Marshal(m)
+	if err != nil {
+		slog.Error("failed to marshal into json", "err", err)
+		os.Exit(1)
+	}
+	return string(b)
 }
 
-func NewIndexClient(useMinTsFromFile bool) IndexClient {
+type Modules []Module
+
+func (ms Modules) GetMaxTs() time.Time {
+	maxTs := time.Unix(0, 0)
+	for _, m := range ms {
+		if m.Timestamp.UnixNano() >= maxTs.UnixNano() {
+			maxTs = m.Timestamp
+		}
+	}
+	return maxTs
+}
+
+type IndexClient struct {
+	BaseUrl          string
+	useMaxTsFromFile bool
+	MaxTs            time.Time
+}
+
+func NewIndexClient(useMaxTsFromFile bool) IndexClient {
 	return IndexClient{
 		BaseUrl:          GO_INDEX,
-		useMinTsFromFile: useMinTsFromFile,
+		useMaxTsFromFile: useMaxTsFromFile,
 	}
 }
 
-func (c *IndexClient) LoadMinTsFile() error {
-	minTs, err := loadMaxTsFromFile()
+func (c *IndexClient) WithExplicitMaxTs(ts time.Time) {
+	c.MaxTs = ts
+}
+
+func (c *IndexClient) LoadMaxTsFile() error {
+	maxTs, err := loadMaxTsFromFile()
 	if err != nil {
 		return err
 	}
-	c.minTs = minTs
+	c.MaxTs = maxTs
 	return nil
 }
 
-func (c IndexClient) Scrape(limit int) ([]Module, error) {
-	if c.useMinTsFromFile {
-		if err := c.LoadMinTsFile(); err != nil {
-			slog.Error("failed to load MIN_TS, using default 1970-01-01", "err", err)
+func (c IndexClient) Scrape(limit int) (Modules, error) {
+	if c.useMaxTsFromFile {
+		if err := c.LoadMaxTsFile(); err != nil {
+			slog.Error("failed to load MAX_TS, using default 1970-01-01", "err", err)
 		}
 	}
-	ts := strftime.Format("%Y-%m-%dT%H:%M:%S.%fZ", c.minTs)
+	ts := strftime.Format("%Y-%m-%dT%H:%M:%S.%fZ", c.MaxTs)
 	endpoint := fmt.Sprintf("%s/index?since=%s&limit=%v", c.BaseUrl, ts, limit)
-	slog.Info("scraper", "endpoint", endpoint)
+	slog.Debug("scraper", "endpoint", endpoint)
 
 	resp, err := http.Get(endpoint)
 	if err != nil {
@@ -65,7 +91,12 @@ func (c IndexClient) Scrape(limit int) ([]Module, error) {
 	if err != nil {
 		return []Module{}, err
 	}
-	slog.Info("scraper", "collectedBytes", len(b))
+
+	if resp.StatusCode != 200 {
+		return Modules{}, fmt.Errorf("server responded with %v: %v", resp.Status, string(b))
+	}
+
+	slog.Debug("scraper", "collectedBytes", len(b))
 
 	// incoming data is jsonlines, process one by one
 	modules := []Module{}
@@ -80,6 +111,6 @@ func (c IndexClient) Scrape(limit int) ([]Module, error) {
 		}
 		modules = append(modules, mod)
 	}
-	slog.Info("scraper", "modulesScraped", len(modules))
+	slog.Debug("scraper", "modulesScraped", len(modules))
 	return modules, nil
 }
