@@ -8,7 +8,6 @@ import (
 )
 
 var syncModulesCmdConfig = struct {
-	requestBufferSize    int
 	concurrentProcessors int
 	batchSize            int
 }{}
@@ -17,8 +16,11 @@ var syncModulesCmd = &cobra.Command{
 	Use:   "modules",
 	Short: "Sync modules from index.golang.org to a local directory",
 	Run: func(cmd *cobra.Command, args []string) {
+		if syncModulesCmdConfig.batchSize <= 1 || syncModulesCmdConfig.batchSize > 2000 {
+			slog.Error("batch-size must be between 2 and 2000 inclusive")
+		}
 		dlc := dl.NewDownloadClient(
-			syncModulesCmdConfig.requestBufferSize,
+			syncModulesCmdConfig.batchSize,
 			syncModulesCmdConfig.concurrentProcessors,
 		)
 		go dlc.ProcessIncomingDownloadRequests()
@@ -30,13 +32,13 @@ var syncModulesCmd = &cobra.Command{
 			}
 			dlc.EnqueueBatch(mods)
 			dlc.AwaitInflight()
+			slog.Info("finished writing batch", "maxTs", mods.GetMaxTs().String())
 		}
 	},
 }
 
 func init() {
 	syncCmd.AddCommand(syncModulesCmd)
-	syncModulesCmd.Flags().IntVar(&syncModulesCmdConfig.requestBufferSize, "request-buffer-size", 2000, "buffer at most these many requests")
-	syncModulesCmd.Flags().IntVarP(&syncModulesCmdConfig.concurrentProcessors, "concurrent-processors", "c", 10, "number of concurrent processors processing requests")
-	syncModulesCmd.Flags().IntVar(&syncModulesCmdConfig.batchSize, "batch-size", 2000, "batch these many requests at most")
+	syncModulesCmd.Flags().IntVarP(&syncModulesCmdConfig.batchSize, "batch-size", "b", 2000, "batch these many requests at most, should a batch fail sync will restart from the last successful batch (min=2, max=2000)")
+	syncModulesCmd.Flags().IntVarP(&syncModulesCmdConfig.concurrentProcessors, "concurrent-processors", "c", 10, "number of concurrent processors processing requests, reducing it will reduce network i/o")
 }
