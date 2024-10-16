@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path"
 	"strings"
 	"time"
 
@@ -48,13 +49,15 @@ func (ms Modules) GetMaxTs() time.Time {
 type IndexClient struct {
 	BaseUrl          string
 	useMaxTsFromFile bool
+	maxTsLocation    string
 	MaxTs            time.Time
 }
 
-func NewIndexClient(useMaxTsFromFile bool) IndexClient {
-	return IndexClient{
+func NewIndexClient(useMaxTsFromFile bool) *IndexClient {
+	return &IndexClient{
 		BaseUrl:          GO_INDEX,
 		useMaxTsFromFile: useMaxTsFromFile,
+		maxTsLocation:    path.Join(OUTPUT_DIR, "MAX_TS"),
 	}
 }
 
@@ -62,8 +65,13 @@ func (c *IndexClient) WithExplicitMaxTs(ts time.Time) {
 	c.MaxTs = ts
 }
 
+func (c *IndexClient) WithMaxTsLocation(location string) *IndexClient {
+	c.maxTsLocation = location
+	return c
+}
+
 func (c *IndexClient) LoadMaxTsFile() error {
-	maxTs, err := loadMaxTsFromFile()
+	maxTs, err := loadMaxTsFromFile(c.maxTsLocation)
 	if err != nil {
 		return err
 	}

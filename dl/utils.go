@@ -41,8 +41,8 @@ func downloadFile(filepath string, url string) error {
 	return err
 }
 
-func loadMaxTsFromFile() (time.Time, error) {
-	data, err := os.ReadFile(MAX_TS_FILE)
+func loadMaxTsFromFile(maxTsDir string) (time.Time, error) {
+	data, err := os.ReadFile(maxTsDir)
 	if err != nil {
 		return time.Time{}, err
 	}

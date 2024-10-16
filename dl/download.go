@@ -44,18 +44,37 @@ func NewDownloadRequest(mod Module) DownloadRequest {
 
 type DownloadClient struct {
 	outputDir                string
+	maxTsDir                 string
 	incomingDownloadRequests chan DownloadRequest
 	inflightDownloadRequests chan DownloadRequest
 	numConcurrentProcessors  int
 }
 
-func NewDownloadClient(incomingRequestCapacity int, numConcurrentProcessors int) DownloadClient {
-	return DownloadClient{
-		incomingDownloadRequests: make(chan DownloadRequest, incomingRequestCapacity),
-		inflightDownloadRequests: make(chan DownloadRequest, incomingRequestCapacity),
+func NewDownloadClient() *DownloadClient {
+	return &DownloadClient{
+		incomingDownloadRequests: make(chan DownloadRequest, 1),
+		inflightDownloadRequests: make(chan DownloadRequest, 1),
 		outputDir:                OUTPUT_DIR,
-		numConcurrentProcessors:  numConcurrentProcessors,
+		maxTsDir:                 path.Join(OUTPUT_DIR, "MAX_TS"),
+		numConcurrentProcessors:  1,
 	}
+}
+
+func (c *DownloadClient) WithOutputDir(dir string) *DownloadClient {
+	c.outputDir = dir
+	c.maxTsDir = path.Join(c.outputDir, "MAX_TS")
+	return c
+}
+
+func (c *DownloadClient) WithNumConcurrentProcessors(cnt int) *DownloadClient {
+	c.numConcurrentProcessors = cnt
+	return c
+}
+
+func (c *DownloadClient) WithRequestCapacity(cnt int) *DownloadClient {
+	c.incomingDownloadRequests = make(chan DownloadRequest, cnt)
+	c.inflightDownloadRequests = make(chan DownloadRequest, cnt)
+	return c
 }
 
 func (c DownloadClient) EnqueueBatch(mods []Module) {
@@ -67,7 +86,7 @@ func (c DownloadClient) EnqueueBatch(mods []Module) {
 		c.enqueueMod(mod)
 	}
 
-	minTsFile := path.Join(MAX_TS_FILE)
+	minTsFile := path.Join(c.maxTsDir)
 	ts := strftime.Format("%Y-%m-%dT%H:%M:%S.%fZ", maxTs)
 	if err := os.WriteFile(minTsFile, []byte(ts), 0644); err != nil {
 		slog.Error("failed to write minTs to file MAX_TS:", "err", err)

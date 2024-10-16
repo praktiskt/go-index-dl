@@ -20,7 +20,7 @@ func TestDownloadClient(t *testing.T) {
 	}
 	req := NewDownloadRequest(mod)
 
-	c := NewDownloadClient(1, 20)
+	c := NewDownloadClient()
 	assert.Nil(t, c.Download(req))
 }
 
@@ -30,7 +30,9 @@ func TestDownloadClientLargeSample(t *testing.T) {
 	}
 	defer func() { os.RemoveAll("TestDownloadClientLargeSample") }()
 
-	dl := NewDownloadClient(2000, 10)
+	dl := NewDownloadClient().
+		WithRequestCapacity(10).
+		WithNumConcurrentProcessors(10)
 	go dl.ProcessIncomingDownloadRequests()
 	ind := NewIndexClient(true)
 	for range 5 {
