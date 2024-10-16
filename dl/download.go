@@ -86,9 +86,9 @@ func (c DownloadClient) EnqueueBatch(mods []Module) {
 		c.enqueueMod(mod)
 	}
 
-	minTsFile := path.Join(c.maxTsDir)
+	maxTsFile := path.Join(c.maxTsDir)
 	ts := strftime.Format("%Y-%m-%dT%H:%M:%S.%fZ", maxTs)
-	if err := os.WriteFile(minTsFile, []byte(ts), 0644); err != nil {
+	if err := os.WriteFile(maxTsFile, []byte(ts), 0644); err != nil {
 		slog.Error("failed to write minTs to file MAX_TS:", "err", err)
 	}
 }
