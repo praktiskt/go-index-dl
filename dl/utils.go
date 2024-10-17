@@ -1,6 +1,7 @@
 package dl
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -29,16 +30,31 @@ func downloadFile(filepath string, url string) error {
 	}
 	defer resp.Body.Close()
 
-	// Create the file
-	out, err := os.Create(filepath)
+	if resp.StatusCode != 200 {
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("server responded with %v: %v", resp.Status, string(b))
+	}
+
+	tmpFile, err := os.CreateTemp("", "go-index-dl")
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer tmpFile.Close()
+	defer os.Remove(tmpFile.Name())
 
-	// Write the body to file
-	_, err = io.Copy(out, resp.Body)
-	return err
+	_, err = io.Copy(tmpFile, resp.Body)
+	if err != nil {
+		return err
+	}
+
+	if err := os.Rename(tmpFile.Name(), filepath); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func loadMaxTsFromFile(maxTsDir string) (time.Time, error) {
