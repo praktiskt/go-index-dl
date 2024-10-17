@@ -130,7 +130,7 @@ func (c *DownloadClient) ProcessIncomingDownloadRequests() {
 		go func() {
 			for req := range c.incomingDownloadRequests {
 				c.inflightDownloadRequests <- req
-				if c.skipPseudoVersions && regexp.MustCompile(`^v\d+\.\d+\.\d+(\-\d+)?-\d{8}\d{6}-[a-f0-9]{12}$`).MatchString(req.Module.Version) {
+				if c.skipPseudoVersions && regexp.MustCompile(`v\d+\.\d+\.\d+-(\d+\.)?(\d+\.)?\d{8}\d{6}-[a-f0-9]{12}`).MatchString(req.Module.Version) {
 					c.skippedRequests.Increment()
 					<-c.inflightDownloadRequests
 					continue
