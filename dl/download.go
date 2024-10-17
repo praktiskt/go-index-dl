@@ -3,8 +3,11 @@ package dl
 import (
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path"
+	"praktiskt/go-index-dl/utils"
+	"strconv"
 	"strings"
 	"time"
 
@@ -47,7 +50,10 @@ type DownloadClient struct {
 	maxTsDir                 string
 	incomingDownloadRequests chan DownloadRequest
 	inflightDownloadRequests chan DownloadRequest
+	skippedRequests          utils.ConcurrentCounter[int]
+	failedRequests           utils.ConcurrentCounter[int]
 	numConcurrentProcessors  int
+	skipIfNoListFile         bool
 }
 
 func NewDownloadClient() *DownloadClient {
@@ -57,6 +63,9 @@ func NewDownloadClient() *DownloadClient {
 		outputDir:                OUTPUT_DIR,
 		maxTsDir:                 path.Join(OUTPUT_DIR, "MAX_TS"),
 		numConcurrentProcessors:  1,
+		skipIfNoListFile:         false,
+		skippedRequests:          utils.NewConcurrentCounter[int](),
+		failedRequests:           utils.NewConcurrentCounter[int](),
 	}
 }
 
@@ -77,7 +86,12 @@ func (c *DownloadClient) WithRequestCapacity(cnt int) *DownloadClient {
 	return c
 }
 
-func (c DownloadClient) EnqueueBatch(mods []Module) {
+func (c *DownloadClient) WithSkipIfNoListFile(setting bool) *DownloadClient {
+	c.skipIfNoListFile = setting
+	return c
+}
+
+func (c *DownloadClient) EnqueueBatch(mods []Module) {
 	maxTs := time.Unix(0, 0)
 	for _, mod := range mods {
 		if mod.Timestamp.Unix() > maxTs.Unix() {
@@ -93,18 +107,25 @@ func (c DownloadClient) EnqueueBatch(mods []Module) {
 	}
 }
 
-func (c DownloadClient) enqueueMod(mod Module) {
+func (c *DownloadClient) enqueueMod(mod Module) {
 	c.incomingDownloadRequests <- NewDownloadRequest(mod)
+	c.failedRequests.Reset()
+	c.skippedRequests.Reset()
 }
 
 // ProcessIncomingDownloadRequests blocks the thread and processes incoming DownloadRequests
-func (c DownloadClient) ProcessIncomingDownloadRequests() {
+func (c *DownloadClient) ProcessIncomingDownloadRequests() {
 	for range c.numConcurrentProcessors {
 		go func() {
 			for req := range c.incomingDownloadRequests {
 				c.inflightDownloadRequests <- req
 				if err := c.Download(req); err != nil {
-					slog.Error("download processor:", "err", err)
+					if c.skipIfNoListFile && strings.HasPrefix(err.Error(), "list file missing for") {
+						c.skippedRequests.Increment()
+					} else {
+						c.failedRequests.Increment()
+						slog.Error("download processor:", "err", err)
+					}
 				}
 				<-c.inflightDownloadRequests
 			}
@@ -113,14 +134,19 @@ func (c DownloadClient) ProcessIncomingDownloadRequests() {
 	<-make(chan struct{})
 }
 
-func (c DownloadClient) AwaitInflight() {
+func (c *DownloadClient) AwaitInflight() {
 	for len(c.incomingDownloadRequests) != 0 || len(c.inflightDownloadRequests) != 0 {
-		slog.Info("awaitInflight:", "queued", len(c.incomingDownloadRequests), "inflight", len(c.inflightDownloadRequests))
+		slog.Info("awaitInflight:",
+			"queued", len(c.incomingDownloadRequests),
+			"inflight", len(c.inflightDownloadRequests),
+			"skipped", c.skippedRequests.Value(),
+			"failed", c.failedRequests.Value(),
+		)
 		time.Sleep(time.Duration(1) * time.Second)
 	}
 }
 
-func (c DownloadClient) Download(req DownloadRequest) error {
+func (c *DownloadClient) Download(req DownloadRequest) error {
 	if !semver.IsValid(req.Module.Version) {
 		return fmt.Errorf("invalid version: %#v", req.Module)
 	}
@@ -131,31 +157,56 @@ func (c DownloadClient) Download(req DownloadRequest) error {
 		return err
 	}
 
+	// get list file
+	listURL := fmt.Sprintf("%s/%s/@v/list", GO_PROXY, req.Module.Path)
+	if c.skipIfNoListFile {
+		resp, err := http.Head(listURL)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		cl := resp.Header.Get("Content-Length")
+		v, err := strconv.Atoi(cl)
+		if err != nil {
+			return err
+		}
+		if v == 0 {
+			return fmt.Errorf("list file missing for %v", req.Module.Path)
+		}
+	}
+	listPath := path.Join(cacheDir, "list")
+	if _, err := os.Stat(listPath); err != nil {
+		slog.Debug("downloading", "url", listURL, "targetDir", listPath)
+		err := downloadFile(listPath, listURL)
+		if err != nil {
+			if strings.Contains(err.Error(), `invalid escaped module path`) {
+				return nil
+			}
+			return fmt.Errorf("failed to download list: %v", err)
+		}
+	}
+
 	// get base files
 	files := []string{".info", ".mod", ".zip"}
 	for _, ext := range files {
 		fileURL := req.Module.BaseURL() + ext
 		filePath := path.Join(cacheDir, req.Module.Version+ext)
-		slog.Debug("downloading", "url", fileURL, "targetDir", filePath)
-		if err := downloadFile(filePath, fileURL); err != nil {
-			return fmt.Errorf("failed to download %s: %v", fileURL, err)
+		if _, err := os.Stat(filePath); err != nil {
+			slog.Debug("downloading", "url", fileURL, "targetDir", filePath)
+			if err := downloadFile(filePath, fileURL); err != nil {
+				return fmt.Errorf("failed to download %s: %v", fileURL, err)
+			}
 		}
-	}
-
-	// get list file
-	listURL := fmt.Sprintf("%s/%s/@v/list", GO_PROXY, req.Module.Path)
-	listPath := path.Join(cacheDir, "list")
-	slog.Debug("downloading", "url", listURL, "targetDir", listPath)
-	if err := downloadFile(listPath, listURL); err != nil {
-		return fmt.Errorf("failed to download list: %v", err)
 	}
 
 	// get latest file
 	latestURL := fmt.Sprintf("%s/%s/@latest", GO_PROXY, req.Module.Path)
 	latestPath := path.Join(cacheDir, "latest")
-	slog.Debug("downloading", "url", latestURL, "targetDir", latestPath)
-	if err := downloadFile(latestPath, latestURL); err != nil {
-		return fmt.Errorf("failed to download latest: %v", err)
+	if _, err := os.Stat(latestPath); err != nil {
+		slog.Debug("downloading", "url", latestURL, "targetDir", latestPath)
+		if err := downloadFile(latestPath, latestURL); err != nil {
+			return fmt.Errorf("failed to download latest: %v", err)
+		}
 	}
 
 	return nil
