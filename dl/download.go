@@ -175,7 +175,7 @@ func (c *DownloadClient) Download(req DownloadRequest) error {
 		}
 	}
 	listPath := path.Join(cacheDir, "list")
-	if _, err := os.Stat(listPath); err != nil {
+	if !fileExists(listPath) {
 		slog.Debug("downloading", "url", listURL, "targetDir", listPath)
 		err := downloadFile(listPath, listURL)
 		if err != nil {
@@ -191,7 +191,7 @@ func (c *DownloadClient) Download(req DownloadRequest) error {
 	for _, ext := range files {
 		fileURL := req.Module.BaseURL() + ext
 		filePath := path.Join(cacheDir, req.Module.Version+ext)
-		if _, err := os.Stat(filePath); err != nil {
+		if !fileExists(filePath) {
 			slog.Debug("downloading", "url", fileURL, "targetDir", filePath)
 			if err := downloadFile(filePath, fileURL); err != nil {
 				return fmt.Errorf("failed to download %s: %v", fileURL, err)
@@ -202,7 +202,7 @@ func (c *DownloadClient) Download(req DownloadRequest) error {
 	// get latest file
 	latestURL := fmt.Sprintf("%s/%s/@latest", GO_PROXY, req.Module.Path)
 	latestPath := path.Join(cacheDir, "latest")
-	if _, err := os.Stat(latestPath); err != nil {
+	if !fileExists(latestPath) {
 		slog.Debug("downloading", "url", latestURL, "targetDir", latestPath)
 		if err := downloadFile(latestPath, latestURL); err != nil {
 			return fmt.Errorf("failed to download latest: %v", err)
