@@ -6,6 +6,7 @@ require (
 	github.com/ncruces/go-strftime v0.1.9
 	github.com/spf13/cobra v1.8.1
 	github.com/stretchr/testify v1.9.0
+	golang.org/x/exp v0.0.0-20241009180824-f66d83c29e7c
 	golang.org/x/mod v0.21.0
 )
 
