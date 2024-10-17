@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"praktiskt/go-index-dl/utils"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -55,6 +56,7 @@ type DownloadClient struct {
 	completedRequests        utils.ConcurrentCounter[int]
 	numConcurrentProcessors  int
 	skipIfNoListFile         bool
+	skipPseudoVersions       bool
 }
 
 func NewDownloadClient() *DownloadClient {
@@ -65,6 +67,7 @@ func NewDownloadClient() *DownloadClient {
 		maxTsDir:                 path.Join(OUTPUT_DIR, "MAX_TS"),
 		numConcurrentProcessors:  1,
 		skipIfNoListFile:         false,
+		skipPseudoVersions:       false,
 		skippedRequests:          utils.NewConcurrentCounter[int](),
 		failedRequests:           utils.NewConcurrentCounter[int](),
 		completedRequests:        utils.NewConcurrentCounter[int](),
@@ -90,6 +93,11 @@ func (c *DownloadClient) WithRequestCapacity(cnt int) *DownloadClient {
 
 func (c *DownloadClient) WithSkipIfNoListFile(setting bool) *DownloadClient {
 	c.skipIfNoListFile = setting
+	return c
+}
+
+func (c *DownloadClient) WithSkipPseudoVersions(setting bool) *DownloadClient {
+	c.skipPseudoVersions = setting
 	return c
 }
 
@@ -122,14 +130,23 @@ func (c *DownloadClient) ProcessIncomingDownloadRequests() {
 		go func() {
 			for req := range c.incomingDownloadRequests {
 				c.inflightDownloadRequests <- req
+				if c.skipPseudoVersions && regexp.MustCompile(`^v\d+\.\d+\.\d+(\-\d+)?-\d{8}\d{6}-[a-f0-9]{12}$`).MatchString(req.Module.Version) {
+					c.skippedRequests.Increment()
+					<-c.inflightDownloadRequests
+					continue
+				}
 				if err := c.Download(req); err != nil {
 					if c.skipIfNoListFile && strings.HasPrefix(err.Error(), "list file missing for") {
 						c.skippedRequests.Increment()
-					} else {
-						c.failedRequests.Increment()
-						slog.Error("download processor:", "err", err)
+						<-c.inflightDownloadRequests
+						continue
 					}
+					slog.Error("download processor:", "err", err)
+					c.failedRequests.Increment()
+					<-c.inflightDownloadRequests
+					continue
 				}
+
 				c.completedRequests.Increment()
 				<-c.inflightDownloadRequests
 			}

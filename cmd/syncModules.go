@@ -13,6 +13,7 @@ var syncModulesCmdConfig = struct {
 	batchSize            int
 	outputDir            string
 	skipIfNoListFile     bool
+	skipPseudoVersions   bool
 }{}
 
 var syncModulesCmd = &cobra.Command{
@@ -32,7 +33,8 @@ determine where to collect modules from.`,
 			WithNumConcurrentProcessors(syncModulesCmdConfig.concurrentProcessors).
 			WithOutputDir(syncModulesCmdConfig.outputDir).
 			WithRequestCapacity(syncModulesCmdConfig.batchSize).
-			WithSkipIfNoListFile(true)
+			WithSkipIfNoListFile(syncModulesCmdConfig.skipIfNoListFile).
+			WithSkipPseudoVersions(syncModulesCmdConfig.skipPseudoVersions)
 
 		go dlc.ProcessIncomingDownloadRequests()
 		ind := dl.NewIndexClient(true).
@@ -55,4 +57,5 @@ func init() {
 	syncModulesCmd.Flags().IntVarP(&syncModulesCmdConfig.concurrentProcessors, "concurrent-processors", "c", 10, "number of concurrent processors processing requests, reducing it will reduce network i/o")
 	syncModulesCmd.Flags().StringVarP(&syncModulesCmdConfig.outputDir, "output-dir", "o", dl.OUTPUT_DIR, "the absolute or relative path to the output directory (can also be set with OUTPUT_DIR)")
 	syncModulesCmd.Flags().BoolVar(&syncModulesCmdConfig.skipIfNoListFile, "skip-if-no-list-file", false, "skip a module / version if it contains no list file")
+	syncModulesCmd.Flags().BoolVar(&syncModulesCmdConfig.skipPseudoVersions, "skip-pseudo-versions", false, "skip pseudo versions, see https://go.dev/ref/mod#glos-pseudo-version")
 }
