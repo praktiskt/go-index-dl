@@ -23,6 +23,10 @@ func createDirIfNotExist(dir string) error {
 }
 
 func downloadFile(filepath string, url string) error {
+	if fileExists(filepath) {
+		return nil
+	}
+
 	// Get the data
 	resp, err := http.Get(url)
 	if err != nil {
