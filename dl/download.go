@@ -52,6 +52,7 @@ type DownloadClient struct {
 	inflightDownloadRequests chan DownloadRequest
 	skippedRequests          utils.ConcurrentCounter[int]
 	failedRequests           utils.ConcurrentCounter[int]
+	completedRequests        utils.ConcurrentCounter[int]
 	numConcurrentProcessors  int
 	skipIfNoListFile         bool
 }
@@ -66,6 +67,7 @@ func NewDownloadClient() *DownloadClient {
 		skipIfNoListFile:         false,
 		skippedRequests:          utils.NewConcurrentCounter[int](),
 		failedRequests:           utils.NewConcurrentCounter[int](),
+		completedRequests:        utils.NewConcurrentCounter[int](),
 	}
 }
 
@@ -111,6 +113,7 @@ func (c *DownloadClient) enqueueMod(mod Module) {
 	c.incomingDownloadRequests <- NewDownloadRequest(mod)
 	c.failedRequests.Reset()
 	c.skippedRequests.Reset()
+	c.completedRequests.Reset()
 }
 
 // ProcessIncomingDownloadRequests blocks the thread and processes incoming DownloadRequests
@@ -127,6 +130,7 @@ func (c *DownloadClient) ProcessIncomingDownloadRequests() {
 						slog.Error("download processor:", "err", err)
 					}
 				}
+				c.completedRequests.Increment()
 				<-c.inflightDownloadRequests
 			}
 		}()
@@ -141,6 +145,7 @@ func (c *DownloadClient) AwaitInflight() {
 			"inflight", len(c.inflightDownloadRequests),
 			"skipped", c.skippedRequests.Value(),
 			"failed", c.failedRequests.Value(),
+			"completed", c.completedRequests.Value(),
 		)
 		time.Sleep(time.Duration(1) * time.Second)
 	}
