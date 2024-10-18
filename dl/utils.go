@@ -22,7 +22,7 @@ func createDirIfNotExist(dir string) error {
 	return nil
 }
 
-func downloadFile(filepath string, url string) error {
+func downloadFile(filepath string, url string, tempDir string) error {
 	if fileExists(filepath) {
 		return nil
 	}
@@ -42,7 +42,7 @@ func downloadFile(filepath string, url string) error {
 		return fmt.Errorf("server responded with %v: %v", resp.Status, string(b))
 	}
 
-	tmpFile, err := os.CreateTemp("", "go-index-dl")
+	tmpFile, err := os.CreateTemp(tempDir, "go-index-dl")
 	if err != nil {
 		return err
 	}

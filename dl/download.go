@@ -48,6 +48,7 @@ func NewDownloadRequest(mod Module) DownloadRequest {
 
 type DownloadClient struct {
 	outputDir                string
+	tempDir                  string
 	maxTsDir                 string
 	incomingDownloadRequests chan DownloadRequest
 	inflightDownloadRequests chan DownloadRequest
@@ -64,6 +65,7 @@ func NewDownloadClient() *DownloadClient {
 		incomingDownloadRequests: make(chan DownloadRequest, 1),
 		inflightDownloadRequests: make(chan DownloadRequest, 1),
 		outputDir:                OUTPUT_DIR,
+		tempDir:                  path.Join(OUTPUT_DIR, "tmp"),
 		maxTsDir:                 path.Join(OUTPUT_DIR, "MAX_TS"),
 		numConcurrentProcessors:  1,
 		skipIfNoListFile:         false,
@@ -77,6 +79,11 @@ func NewDownloadClient() *DownloadClient {
 func (c *DownloadClient) WithOutputDir(dir string) *DownloadClient {
 	c.outputDir = dir
 	c.maxTsDir = path.Join(c.outputDir, "MAX_TS")
+	return c
+}
+
+func (c *DownloadClient) WithTempDir(dir string) *DownloadClient {
+	c.tempDir = dir
 	return c
 }
 
@@ -102,6 +109,10 @@ func (c *DownloadClient) WithSkipPseudoVersions(setting bool) *DownloadClient {
 }
 
 func (c *DownloadClient) EnqueueBatch(mods []Module) {
+	if err := createDirIfNotExist(c.tempDir); err != nil {
+		slog.Error(err.Error())
+	}
+
 	maxTs := time.Unix(0, 0)
 	for _, mod := range mods {
 		if mod.Timestamp.Unix() > maxTs.Unix() {
@@ -156,6 +167,7 @@ func (c *DownloadClient) ProcessIncomingDownloadRequests() {
 }
 
 func (c *DownloadClient) AwaitInflight() {
+	defer os.RemoveAll(c.tempDir)
 	for len(c.incomingDownloadRequests) != 0 || len(c.inflightDownloadRequests) != 0 {
 		slog.Info("awaitInflight:",
 			"queued", len(c.incomingDownloadRequests),
@@ -198,7 +210,7 @@ func (c *DownloadClient) Download(req DownloadRequest) error {
 	}
 	listPath := path.Join(cacheDir, "list")
 	slog.Debug("downloading", "url", listURL, "targetDir", listPath)
-	err := downloadFile(listPath, listURL)
+	err := downloadFile(listPath, listURL, c.tempDir)
 	if err != nil {
 		if strings.Contains(err.Error(), `invalid escaped module path`) {
 			return nil
@@ -212,7 +224,7 @@ func (c *DownloadClient) Download(req DownloadRequest) error {
 		fileURL := req.Module.BaseURL() + ext
 		filePath := path.Join(cacheDir, req.Module.Version+ext)
 		slog.Debug("downloading", "url", fileURL, "targetDir", filePath)
-		if err := downloadFile(filePath, fileURL); err != nil {
+		if err := downloadFile(filePath, fileURL, c.tempDir); err != nil {
 			return fmt.Errorf("failed to download %s: %v", fileURL, err)
 		}
 	}
@@ -221,7 +233,7 @@ func (c *DownloadClient) Download(req DownloadRequest) error {
 	latestURL := fmt.Sprintf("%s/%s/@latest", GO_PROXY, req.Module.Path)
 	latestPath := path.Join(cacheDir, "latest")
 	slog.Debug("downloading", "url", latestURL, "targetDir", latestPath)
-	if err := downloadFile(latestPath, latestURL); err != nil {
+	if err := downloadFile(latestPath, latestURL, c.tempDir); err != nil {
 		return fmt.Errorf("failed to download latest: %v", err)
 	}
 
