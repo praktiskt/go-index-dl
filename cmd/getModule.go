@@ -32,7 +32,7 @@ var getModuleCmd = &cobra.Command{
 			WithSkipMaxTsWrite(true)
 
 		go dlc.ProcessIncomingDownloadRequests()
-		mod := dl.Module{Path: path.Join(dl.GO_PROXY, getModuleCmdConfig.moduleName)}
+		mod := dl.Module{Path: getModuleCmdConfig.moduleName, Version: getModuleCmdConfig.moduleVersion}
 		if getModuleCmdConfig.moduleVersion == "latest" {
 			modl, err := dl.NewIndexClient(false).GetLatestVersion(getModuleCmdConfig.moduleName)
 			if err != nil {
