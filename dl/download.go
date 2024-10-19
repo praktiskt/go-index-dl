@@ -219,7 +219,7 @@ func (c *DownloadClient) Download(req DownloadRequest) error {
 	}
 	listPath := path.Join(cacheDir, "list")
 	slog.Debug("downloading", "url", listURL, "targetDir", listPath)
-	err := downloadFile(listPath, listURL, c.tempDir)
+	err := downloadFile(listPath, listURL, c.tempDir, false)
 	if err != nil {
 		if strings.Contains(err.Error(), `invalid escaped module path`) {
 			return nil
@@ -233,7 +233,7 @@ func (c *DownloadClient) Download(req DownloadRequest) error {
 		fileURL := req.Module.BaseURL() + ext
 		filePath := path.Join(cacheDir, req.Module.Version+ext)
 		slog.Debug("downloading", "url", fileURL, "targetDir", filePath)
-		if err := downloadFile(filePath, fileURL, c.tempDir); err != nil {
+		if err := downloadFile(filePath, fileURL, c.tempDir, true); err != nil {
 			return fmt.Errorf("failed to download %s: %v", fileURL, err)
 		}
 	}
@@ -242,7 +242,7 @@ func (c *DownloadClient) Download(req DownloadRequest) error {
 	latestURL := fmt.Sprintf("%s/%s/@latest", GO_PROXY, req.Module.Path)
 	latestPath := path.Join(cacheDir, "latest")
 	slog.Debug("downloading", "url", latestURL, "targetDir", latestPath)
-	if err := downloadFile(latestPath, latestURL, c.tempDir); err != nil {
+	if err := downloadFile(latestPath, latestURL, c.tempDir, false); err != nil {
 		return fmt.Errorf("failed to download latest: %v", err)
 	}
 

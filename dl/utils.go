@@ -22,8 +22,8 @@ func createDirIfNotExist(dir string) error {
 	return nil
 }
 
-func downloadFile(filepath string, url string, tempDir string) error {
-	if fileExists(filepath) {
+func downloadFile(filepath string, url string, tempDir string, skipIfExists bool) error {
+	if skipIfExists && fileExists(filepath) {
 		return nil
 	}
 
