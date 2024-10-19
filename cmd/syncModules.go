@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"path"
 	"praktiskt/go-index-dl/dl"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -50,6 +51,12 @@ determine where to collect modules from.`,
 			dlc.EnqueueBatch(mods)
 			dlc.AwaitInflight()
 			slog.Info("finished writing batch", "maxTs", mods.GetMaxTs().String())
+
+			if len(mods) <= 1 {
+				slog.Info("very few modules collected, sleeping for 60 seconds before trying again")
+				time.Sleep(time.Duration(60) * time.Second)
+				continue
+			}
 		}
 	},
 }
