@@ -10,12 +10,12 @@ import (
 )
 
 var syncModulesCmdConfig = struct {
-	concurrentProcessors int
-	batchSize            int
-	outputDir            string
-	tempDir              string
-	skipIfNoListFile     bool
-	skipPseudoVersions   bool
+	concurrentProcessors   int
+	batchSize              int
+	outputDir              string
+	tempDir                string
+	onlyLatestIfNoListFile bool
+	skipPseudoVersions     bool
 }{}
 
 var syncModulesCmd = &cobra.Command{
@@ -36,7 +36,7 @@ determine where to collect modules from.`,
 			WithOutputDir(syncModulesCmdConfig.outputDir).
 			WithTempDir(syncModulesCmdConfig.tempDir).
 			WithRequestCapacity(syncModulesCmdConfig.batchSize).
-			WithSkipIfNoListFile(syncModulesCmdConfig.skipIfNoListFile).
+			WithOnlyLatestIfNoListFile(syncModulesCmdConfig.onlyLatestIfNoListFile).
 			WithSkipPseudoVersions(syncModulesCmdConfig.skipPseudoVersions)
 
 		go dlc.ProcessIncomingDownloadRequests()
@@ -67,6 +67,6 @@ func init() {
 	syncModulesCmd.Flags().IntVarP(&syncModulesCmdConfig.concurrentProcessors, "concurrent-processors", "c", 10, "number of concurrent processors processing requests, reducing it will reduce network i/o")
 	syncModulesCmd.Flags().StringVarP(&syncModulesCmdConfig.outputDir, "output-dir", "o", dl.OUTPUT_DIR, "the absolute or relative path to the output directory (can also be set with OUTPUT_DIR)")
 	syncModulesCmd.Flags().StringVar(&syncModulesCmdConfig.tempDir, "temp-dir", path.Join(dl.OUTPUT_DIR, "tmp"), "the place to store temporary artifacts in")
-	syncModulesCmd.Flags().BoolVar(&syncModulesCmdConfig.skipIfNoListFile, "skip-if-no-list-file", false, "skip a module / version if it contains no list file")
+	syncModulesCmd.Flags().BoolVar(&syncModulesCmdConfig.onlyLatestIfNoListFile, "only-latest-if-no-listfile", true, "if a module has no listed versions, only download its latest version (usually a pseudo version)")
 	syncModulesCmd.Flags().BoolVar(&syncModulesCmdConfig.skipPseudoVersions, "skip-pseudo-versions", false, "skip pseudo versions, see https://go.dev/ref/mod#glos-pseudo-version")
 }

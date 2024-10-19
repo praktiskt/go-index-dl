@@ -56,7 +56,7 @@ type DownloadClient struct {
 	failedRequests           utils.ConcurrentCounter[int]
 	completedRequests        utils.ConcurrentCounter[int]
 	numConcurrentProcessors  int
-	skipIfNoListFile         bool
+	onlyLatestIfNoListFile   bool
 	skipPseudoVersions       bool
 	skipMaxTsWrite           bool
 }
@@ -69,7 +69,7 @@ func NewDownloadClient() *DownloadClient {
 		tempDir:                  path.Join(OUTPUT_DIR, "tmp"),
 		maxTsDir:                 path.Join(OUTPUT_DIR, "MAX_TS"),
 		numConcurrentProcessors:  1,
-		skipIfNoListFile:         false,
+		onlyLatestIfNoListFile:   false,
 		skipPseudoVersions:       false,
 		skipMaxTsWrite:           false,
 		skippedRequests:          utils.NewConcurrentCounter[int](),
@@ -100,8 +100,8 @@ func (c *DownloadClient) WithRequestCapacity(cnt int) *DownloadClient {
 	return c
 }
 
-func (c *DownloadClient) WithSkipIfNoListFile(setting bool) *DownloadClient {
-	c.skipIfNoListFile = setting
+func (c *DownloadClient) WithOnlyLatestIfNoListFile(setting bool) *DownloadClient {
+	c.onlyLatestIfNoListFile = setting
 	return c
 }
 
@@ -156,7 +156,7 @@ func (c *DownloadClient) ProcessIncomingDownloadRequests() {
 					continue
 				}
 				if err := c.Download(req); err != nil {
-					if c.skipIfNoListFile && strings.HasPrefix(err.Error(), "list file missing for") {
+					if c.onlyLatestIfNoListFile && strings.HasPrefix(err.Error(), "list file missing for") {
 						c.skippedRequests.Increment()
 						<-c.inflightDownloadRequests
 						continue
@@ -202,7 +202,7 @@ func (c *DownloadClient) Download(req DownloadRequest) error {
 
 	// get list file
 	listURL := fmt.Sprintf("%s/%s/@v/list", GO_PROXY, req.Module.Path)
-	if c.skipIfNoListFile {
+	if c.onlyLatestIfNoListFile {
 		resp, err := http.Head(listURL)
 		if err != nil {
 			return err
@@ -214,7 +214,11 @@ func (c *DownloadClient) Download(req DownloadRequest) error {
 			return err
 		}
 		if v == 0 {
-			return fmt.Errorf("list file missing for %v", req.Module.Path)
+			mod, err := NewIndexClient(false).GetLatestVersion(req.Module.Path)
+			if err != nil {
+				return err
+			}
+			req.Module = mod
 		}
 	}
 	listPath := path.Join(cacheDir, "list")
