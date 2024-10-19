@@ -45,6 +45,7 @@ determine where to collect modules from.`,
 			mods, err := ind.Scrape(syncModulesCmdConfig.batchSize)
 			if err != nil {
 				slog.Error("failed to scrape", "err", err)
+				continue
 			}
 			dlc.EnqueueBatch(mods)
 			dlc.AwaitInflight()
