@@ -58,6 +58,7 @@ type DownloadClient struct {
 	numConcurrentProcessors  int
 	skipIfNoListFile         bool
 	skipPseudoVersions       bool
+	skipMaxTsWrite           bool
 }
 
 func NewDownloadClient() *DownloadClient {
@@ -70,6 +71,7 @@ func NewDownloadClient() *DownloadClient {
 		numConcurrentProcessors:  1,
 		skipIfNoListFile:         false,
 		skipPseudoVersions:       false,
+		skipMaxTsWrite:           false,
 		skippedRequests:          utils.NewConcurrentCounter[int](),
 		failedRequests:           utils.NewConcurrentCounter[int](),
 		completedRequests:        utils.NewConcurrentCounter[int](),
@@ -108,6 +110,11 @@ func (c *DownloadClient) WithSkipPseudoVersions(setting bool) *DownloadClient {
 	return c
 }
 
+func (c *DownloadClient) WithSkipMaxTsWrite(setting bool) *DownloadClient {
+	c.skipMaxTsWrite = setting
+	return c
+}
+
 func (c *DownloadClient) EnqueueBatch(mods []Module) {
 	if err := createDirIfNotExist(c.tempDir); err != nil {
 		slog.Error(err.Error())
@@ -121,10 +128,12 @@ func (c *DownloadClient) EnqueueBatch(mods []Module) {
 		c.enqueueMod(mod)
 	}
 
-	maxTsFile := path.Join(c.maxTsDir)
-	ts := strftime.Format("%Y-%m-%dT%H:%M:%S.%fZ", maxTs)
-	if err := os.WriteFile(maxTsFile, []byte(ts), 0644); err != nil {
-		slog.Error("failed to write minTs to file MAX_TS:", "err", err)
+	if !c.skipMaxTsWrite {
+		maxTsFile := path.Join(c.maxTsDir)
+		ts := strftime.Format("%Y-%m-%dT%H:%M:%S.%fZ", maxTs)
+		if err := os.WriteFile(maxTsFile, []byte(ts), 0644); err != nil {
+			slog.Error("failed to write minTs to file MAX_TS:", "err", err)
+		}
 	}
 }
 
@@ -167,7 +176,6 @@ func (c *DownloadClient) ProcessIncomingDownloadRequests() {
 }
 
 func (c *DownloadClient) AwaitInflight() {
-	defer os.RemoveAll(c.tempDir)
 	for len(c.incomingDownloadRequests) != 0 || len(c.inflightDownloadRequests) != 0 {
 		slog.Info("awaitInflight:",
 			"queued", len(c.incomingDownloadRequests),
@@ -178,6 +186,7 @@ func (c *DownloadClient) AwaitInflight() {
 		)
 		time.Sleep(time.Duration(1) * time.Second)
 	}
+	os.RemoveAll(c.tempDir)
 }
 
 func (c *DownloadClient) Download(req DownloadRequest) error {

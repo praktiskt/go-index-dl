@@ -6,45 +6,12 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"path"
 	"strings"
 	"time"
 
 	"github.com/ncruces/go-strftime"
 )
-
-// Module represents one entry at https://index.golang.org/index?limit=1
-type Module struct {
-	Timestamp time.Time
-	Path      string
-	Version   string
-}
-
-func (m Module) BaseURL() string {
-	return fmt.Sprintf("%s/%s/@v/%s", GO_PROXY, m.Path, m.Version)
-}
-
-func (m Module) AsJSON() string {
-	b, err := json.Marshal(m)
-	if err != nil {
-		slog.Error("failed to marshal into json", "err", err)
-		os.Exit(1)
-	}
-	return string(b)
-}
-
-type Modules []Module
-
-func (ms Modules) GetMaxTs() time.Time {
-	maxTs := time.Unix(0, 0)
-	for _, m := range ms {
-		if m.Timestamp.UnixNano() >= maxTs.UnixNano() {
-			maxTs = m.Timestamp
-		}
-	}
-	return maxTs
-}
 
 type IndexClient struct {
 	BaseUrl          string
@@ -121,4 +88,37 @@ func (c IndexClient) Scrape(limit int) (Modules, error) {
 	}
 	slog.Debug("scraper", "modulesScraped", len(modules))
 	return modules, nil
+}
+
+func (c IndexClient) GetLatestVersion(modName string) (Module, error) {
+	endpoint := fmt.Sprintf("%s/%s/@latest", GO_PROXY, modName)
+	slog.Debug("GetLatestVersion", "endpoint", endpoint)
+	resp, err := http.Get(endpoint)
+	if err != nil {
+		return Module{}, err
+	}
+	defer resp.Body.Close()
+
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return Module{}, err
+	}
+	partialMod := struct {
+		Version string `json:"Version"`
+		Time    string `json:"Time"`
+	}{}
+	if err := json.Unmarshal(b, &partialMod); err != nil {
+		return Module{}, err
+	}
+
+	ts, err := time.Parse(time.RFC3339, partialMod.Time)
+	if err != nil {
+		return Module{}, err
+	}
+
+	return Module{
+		Path:      modName,
+		Version:   partialMod.Version,
+		Timestamp: ts,
+	}, nil
 }
