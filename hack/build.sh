@@ -11,10 +11,11 @@ now() {
 }
 
 main() {
-    LDFLAGS="-X praktiskt/go-index-dl/cmd.GIT_COMMIT_SHA=$(commit_hash)"
+    LDFLAGS="-s -w -buildid="
+    LDFLAGS="$LDFLAGS -X praktiskt/go-index-dl/cmd.GIT_COMMIT_SHA=$(commit_hash)"
     LDFLAGS="$LDFLAGS -X praktiskt/go-index-dl/cmd.BUILD_TIME=$(now)"
     set -x
-    CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o go-index-dl
+    CGO_ENABLED=0 go build -trimpath -ldflags="$LDFLAGS" -o go-index-dl
 }
 
 main $@
