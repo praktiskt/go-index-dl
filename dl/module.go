@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"regexp"
 	"time"
 )
 
@@ -26,6 +27,14 @@ func (m Module) AsJSON() string {
 		os.Exit(1)
 	}
 	return string(b)
+}
+
+func (m Module) String() string {
+	return fmt.Sprintf("%v@%v", m.Path, m.Version)
+}
+
+func (m Module) IsPseudoVersion() bool {
+	return regexp.MustCompile(`v\d+\.\d+\.\d+-(\d+\.)?(\d+\.)?\d{8}\d{6}-[a-f0-9]{12}`).MatchString(m.Version)
 }
 
 type Modules []Module

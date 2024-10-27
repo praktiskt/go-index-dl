@@ -2,17 +2,16 @@ package dl
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
-	"net/http"
 	"os"
 	"path"
 	"praktiskt/go-index-dl/utils"
-	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/ncruces/go-strftime"
+	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/semver"
 )
 
@@ -36,13 +35,17 @@ type DownloadRequest struct {
 
 	// Module represents one entry at https://index.golang.org/index?limit=1
 	Module Module
+
+	// Required defines whether the module can be skipped or not
+	Required bool
 }
 
-func NewDownloadRequest(mod Module) DownloadRequest {
+func NewDownloadRequest(mod Module, required bool) DownloadRequest {
 	return DownloadRequest{
 		CreatedTimestamp: time.Now(),
 		Status:           DownloadStatusPending,
 		Module:           mod,
+		Required:         required,
 	}
 }
 
@@ -52,11 +55,12 @@ type DownloadClient struct {
 	maxTsDir                 string
 	incomingDownloadRequests chan DownloadRequest
 	inflightDownloadRequests chan DownloadRequest
+	inflightModules          utils.ConcurrentMap[string, bool]
 	skippedRequests          utils.ConcurrentCounter[int]
 	failedRequests           utils.ConcurrentCounter[int]
 	completedRequests        utils.ConcurrentCounter[int]
+	completedModules         utils.ConcurrentMap[string, bool]
 	numConcurrentProcessors  int
-	onlyLatestIfNoListFile   bool
 	skipPseudoVersions       bool
 	skipMaxTsWrite           bool
 }
@@ -69,12 +73,13 @@ func NewDownloadClient() *DownloadClient {
 		tempDir:                  path.Join(OUTPUT_DIR, "tmp"),
 		maxTsDir:                 path.Join(OUTPUT_DIR, "MAX_TS"),
 		numConcurrentProcessors:  1,
-		onlyLatestIfNoListFile:   false,
 		skipPseudoVersions:       false,
 		skipMaxTsWrite:           false,
 		skippedRequests:          utils.NewConcurrentCounter[int](),
 		failedRequests:           utils.NewConcurrentCounter[int](),
 		completedRequests:        utils.NewConcurrentCounter[int](),
+		completedModules:         utils.NewConcurrentMap[string, bool](),
+		inflightModules:          utils.NewConcurrentMap[string, bool](),
 	}
 }
 
@@ -100,11 +105,6 @@ func (c *DownloadClient) WithRequestCapacity(cnt int) *DownloadClient {
 	return c
 }
 
-func (c *DownloadClient) WithOnlyLatestIfNoListFile(setting bool) *DownloadClient {
-	c.onlyLatestIfNoListFile = setting
-	return c
-}
-
 func (c *DownloadClient) WithSkipPseudoVersions(setting bool) *DownloadClient {
 	c.skipPseudoVersions = setting
 	return c
@@ -125,7 +125,7 @@ func (c *DownloadClient) EnqueueBatch(mods []Module) {
 		if mod.Timestamp.Unix() > maxTs.Unix() {
 			maxTs = mod.Timestamp
 		}
-		c.enqueueMod(mod)
+		c.enqueueMod(mod, false)
 	}
 
 	if !c.skipMaxTsWrite {
@@ -137,11 +137,22 @@ func (c *DownloadClient) EnqueueBatch(mods []Module) {
 	}
 }
 
-func (c *DownloadClient) enqueueMod(mod Module) {
-	c.incomingDownloadRequests <- NewDownloadRequest(mod)
+func (c *DownloadClient) enqueueMod(mod Module, required bool) {
+	c.incomingDownloadRequests <- NewDownloadRequest(mod, required)
 	c.failedRequests.Reset()
 	c.skippedRequests.Reset()
 	c.completedRequests.Reset()
+}
+
+func (c *DownloadClient) setInflight(req DownloadRequest) {
+	c.inflightDownloadRequests <- req
+	c.inflightModules.Set(req.Module.String(), true)
+}
+
+func (c *DownloadClient) completeInflight(req DownloadRequest, counter *utils.ConcurrentCounter[int]) {
+	counter.Increment()
+	c.inflightModules.Delete(req.Module.String())
+	<-c.inflightDownloadRequests
 }
 
 // ProcessIncomingDownloadRequests blocks the thread and processes incoming DownloadRequests
@@ -149,26 +160,23 @@ func (c *DownloadClient) ProcessIncomingDownloadRequests() {
 	for range c.numConcurrentProcessors {
 		go func() {
 			for req := range c.incomingDownloadRequests {
-				c.inflightDownloadRequests <- req
-				if c.skipPseudoVersions && regexp.MustCompile(`v\d+\.\d+\.\d+-(\d+\.)?(\d+\.)?\d{8}\d{6}-[a-f0-9]{12}`).MatchString(req.Module.Version) {
-					c.skippedRequests.Increment()
-					<-c.inflightDownloadRequests
-					continue
-				}
-				if err := c.Download(req); err != nil {
-					if c.onlyLatestIfNoListFile && strings.HasPrefix(err.Error(), "list file missing for") {
-						c.skippedRequests.Increment()
-						<-c.inflightDownloadRequests
-						continue
-					}
-					slog.Error("download processor:", "err", err)
-					c.failedRequests.Increment()
-					<-c.inflightDownloadRequests
+				if c.completedModules.Exists(req.Module.String()) || c.inflightModules.Exists(req.Module.String()) {
 					continue
 				}
 
-				c.completedRequests.Increment()
-				<-c.inflightDownloadRequests
+				c.setInflight(req)
+				if !req.Required && c.skipPseudoVersions && req.Module.IsPseudoVersion() {
+					c.completeInflight(req, &c.skippedRequests)
+					continue
+				}
+				if err := c.Download(req); err != nil {
+					slog.Error("download processor:", "modPath", req.Module.Path, "modVersion", req.Module.Version, "err", err)
+					c.completeInflight(req, &c.failedRequests)
+					continue
+				}
+
+				c.completedModules.Set(req.Module.String(), true)
+				c.completeInflight(req, &c.completedRequests)
 			}
 		}()
 	}
@@ -186,6 +194,10 @@ func (c *DownloadClient) AwaitInflight() {
 		)
 		time.Sleep(time.Duration(1) * time.Second)
 	}
+}
+
+// Cleanup cleans up in-flight artifacts and/or downloads.
+func (c *DownloadClient) Cleanup() {
 	os.RemoveAll(c.tempDir)
 }
 
@@ -202,25 +214,6 @@ func (c *DownloadClient) Download(req DownloadRequest) error {
 
 	// get list file
 	listURL := fmt.Sprintf("%s/%s/@v/list", GO_PROXY, req.Module.Path)
-	if c.onlyLatestIfNoListFile {
-		resp, err := http.Head(listURL)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		cl := resp.Header.Get("Content-Length")
-		v, err := strconv.Atoi(cl)
-		if err != nil {
-			return err
-		}
-		if v == 0 {
-			mod, err := NewIndexClient(false).GetLatestVersion(req.Module.Path)
-			if err != nil {
-				return err
-			}
-			req.Module = mod
-		}
-	}
 	listPath := path.Join(cacheDir, "list")
 	slog.Debug("downloading", "url", listURL, "targetDir", listPath)
 	err := downloadFile(listPath, listURL, c.tempDir, false)
@@ -231,8 +224,41 @@ func (c *DownloadClient) Download(req DownloadRequest) error {
 		return fmt.Errorf("failed to download list: %v", err)
 	}
 
+	modURL := req.Module.BaseURL() + ".mod"
+	modPath := path.Join(cacheDir, "mod")
+	slog.Debug("downloading", "url", modURL, "targetDir", modPath)
+	err = downloadFile(modPath, modURL, c.tempDir, false)
+	if err != nil {
+		if strings.Contains(err.Error(), `invalid escaped module path`) {
+			return nil
+		}
+		return fmt.Errorf("failed to download mod: %v", err)
+	}
+
+	modFile, err := os.Open(modPath)
+	if err != nil {
+		return err
+	}
+	defer modFile.Close()
+
+	modData, err := io.ReadAll(modFile)
+	if err != nil {
+		return err
+	}
+
+	// Parse the go.mod file
+	mod, err := modfile.Parse("go.mod", modData, nil)
+	if err != nil {
+		return err
+	}
+
+	for _, req := range mod.Require {
+		newMod := Module{Path: req.Mod.Path, Version: req.Mod.Version}
+		c.incomingDownloadRequests <- NewDownloadRequest(newMod, true)
+	}
+
 	// get base files
-	files := []string{".info", ".mod", ".zip"}
+	files := []string{".info", ".zip"}
 	for _, ext := range files {
 		fileURL := req.Module.BaseURL() + ext
 		filePath := path.Join(cacheDir, req.Module.Version+ext)
