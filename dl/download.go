@@ -184,16 +184,20 @@ func (c *DownloadClient) ProcessIncomingDownloadRequests() {
 }
 
 func (c *DownloadClient) AwaitInflight() {
-	for len(c.incomingDownloadRequests) != 0 || len(c.inflightDownloadRequests) != 0 {
-		slog.Info("awaitInflight:",
+	msg := func(message string) {
+		slog.Info(message,
 			"queued", len(c.incomingDownloadRequests),
 			"inflight", len(c.inflightDownloadRequests),
 			"skipped", c.skippedRequests.Value(),
 			"failed", c.failedRequests.Value(),
 			"completed", c.completedRequests.Value(),
 		)
+	}
+	for len(c.incomingDownloadRequests) != 0 || len(c.inflightDownloadRequests) != 0 {
+		msg("awaitInflight")
 		time.Sleep(time.Duration(1) * time.Second)
 	}
+	msg("done")
 }
 
 // Cleanup cleans up in-flight artifacts and/or downloads.
