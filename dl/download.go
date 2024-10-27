@@ -250,16 +250,17 @@ func (c *DownloadClient) Download(req DownloadRequest) error {
 		return err
 	}
 
-	// Parse the go.mod file
 	mod, err := modfile.Parse("go.mod", modData, nil)
 	if err != nil {
 		return err
 	}
 
-	for _, req := range mod.Require {
-		newMod := Module{Path: req.Mod.Path, Version: req.Mod.Version}
-		c.incomingDownloadRequests <- NewDownloadRequest(newMod, true)
-	}
+	go func(mod *modfile.File) {
+		for _, req := range mod.Require {
+			newMod := Module{Path: req.Mod.Path, Version: req.Mod.Version}
+			c.incomingDownloadRequests <- NewDownloadRequest(newMod, true)
+		}
+	}(mod)
 
 	// get base files
 	files := []string{".info", ".zip"}
