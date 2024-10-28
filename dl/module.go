@@ -40,6 +40,9 @@ func (m Module) IsPseudoVersion() bool {
 type Modules []Module
 
 func (ms Modules) GetMaxTs() time.Time {
+	if len(ms) == 0 {
+		return time.Unix(0, 0)
+	}
 	maxTs := time.Unix(0, 0)
 	for _, m := range ms {
 		if m.Timestamp.UnixNano() >= maxTs.UnixNano() {

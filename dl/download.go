@@ -38,14 +38,19 @@ type DownloadRequest struct {
 
 	// Required defines whether the module can be skipped or not
 	Required bool
+
+	// Defines the number of retries the request is allowed to do
+	Retries int
 }
 
 func NewDownloadRequest(mod Module, required bool) DownloadRequest {
+	// TODO: allow setting retries
 	return DownloadRequest{
 		CreatedTimestamp: time.Now(),
 		Status:           DownloadStatusPending,
 		Module:           mod,
 		Required:         required,
+		Retries:          10,
 	}
 }
 
@@ -59,6 +64,7 @@ type DownloadClient struct {
 	skippedRequests          utils.ConcurrentCounter[int]
 	failedRequests           utils.ConcurrentCounter[int]
 	completedRequests        utils.ConcurrentCounter[int]
+	retriedRequests          utils.ConcurrentCounter[int]
 	completedModules         utils.ConcurrentMap[string, bool]
 	numConcurrentProcessors  int
 	skipPseudoVersions       bool
@@ -78,6 +84,7 @@ func NewDownloadClient() *DownloadClient {
 		skippedRequests:          utils.NewConcurrentCounter[int](),
 		failedRequests:           utils.NewConcurrentCounter[int](),
 		completedRequests:        utils.NewConcurrentCounter[int](),
+		retriedRequests:          utils.NewConcurrentCounter[int](),
 		completedModules:         utils.NewConcurrentMap[string, bool](),
 		inflightModules:          utils.NewConcurrentMap[string, bool](),
 	}
@@ -115,20 +122,18 @@ func (c *DownloadClient) WithSkipMaxTsWrite(setting bool) *DownloadClient {
 	return c
 }
 
-func (c *DownloadClient) EnqueueBatch(mods []Module) {
+func (c *DownloadClient) EnqueueBatch(mods Modules) {
 	if err := createDirIfNotExist(c.tempDir); err != nil {
 		slog.Error(err.Error())
 	}
 
-	maxTs := time.Unix(0, 0)
 	for _, mod := range mods {
-		if mod.Timestamp.Unix() > maxTs.Unix() {
-			maxTs = mod.Timestamp
-		}
 		c.enqueueMod(mod, false)
 	}
 
+	// TODO: Refactor me into a separate function and call separately
 	if !c.skipMaxTsWrite {
+		maxTs := mods.GetMaxTs()
 		maxTsFile := path.Join(c.maxTsDir)
 		ts := strftime.Format("%Y-%m-%dT%H:%M:%S.%fZ", maxTs)
 		if err := os.WriteFile(maxTsFile, []byte(ts), 0644); err != nil {
@@ -139,9 +144,6 @@ func (c *DownloadClient) EnqueueBatch(mods []Module) {
 
 func (c *DownloadClient) enqueueMod(mod Module, required bool) {
 	c.incomingDownloadRequests <- NewDownloadRequest(mod, required)
-	c.failedRequests.Reset()
-	c.skippedRequests.Reset()
-	c.completedRequests.Reset()
 }
 
 func (c *DownloadClient) setInflight(req DownloadRequest) {
@@ -170,6 +172,12 @@ func (c *DownloadClient) ProcessIncomingDownloadRequests() {
 					continue
 				}
 				if err := c.Download(req); err != nil {
+					if req.Retries > 0 {
+						req.Retries -= 1
+						go func() { c.incomingDownloadRequests <- req }()
+						c.completeInflight(req, &c.retriedRequests)
+						continue
+					}
 					slog.Error("download processor:", "modPath", req.Module.Path, "modVersion", req.Module.Version, "err", err)
 					c.completeInflight(req, &c.failedRequests)
 					continue
@@ -184,11 +192,12 @@ func (c *DownloadClient) ProcessIncomingDownloadRequests() {
 }
 
 func (c *DownloadClient) AwaitInflight() {
-	msg := func(message string) {
-		slog.Info(message,
+	msg := func(m string) {
+		slog.Info(m,
 			"queued", len(c.incomingDownloadRequests),
 			"inflight", len(c.inflightDownloadRequests),
 			"skipped", c.skippedRequests.Value(),
+			"retried", c.retriedRequests.Value(),
 			"failed", c.failedRequests.Value(),
 			"completed", c.completedRequests.Value(),
 		)
@@ -198,6 +207,10 @@ func (c *DownloadClient) AwaitInflight() {
 		time.Sleep(time.Duration(1) * time.Second)
 	}
 	msg("done")
+	c.failedRequests.Reset()
+	c.retriedRequests.Reset()
+	c.skippedRequests.Reset()
+	c.completedRequests.Reset()
 }
 
 // Cleanup cleans up in-flight artifacts and/or downloads.

@@ -48,15 +48,15 @@ determine where to collect modules from.`,
 				slog.Error("failed to scrape", "err", err)
 				continue
 			}
-			dlc.EnqueueBatch(mods)
-			dlc.AwaitInflight()
-			slog.Info("finished writing batch", "maxTs", mods.GetMaxTs().String())
-
-			if len(mods) <= 1 {
+			if len(mods) < syncModulesCmdConfig.batchSize {
 				slog.Info("very few modules collected, sleeping for 60 seconds before trying again")
 				time.Sleep(time.Duration(60) * time.Second)
 				continue
 			}
+			dlc.EnqueueBatch(mods)
+			dlc.AwaitInflight()
+			slog.Info("finished writing batch", "maxTs", mods.GetMaxTs().String())
+
 		}
 	},
 }
