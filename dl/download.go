@@ -19,8 +19,10 @@ type DownloadStatus string
 
 const (
 	DownloadStatusFailed    = "failed"
+	DownloadStatusRetry     = "retry"
+	DownloadStatusCompleted = "completed"
 	DownloadStatusPending   = "pending"
-	DownloadStatusProcessed = "processed"
+	DownloadStatusSkipped   = "skipped"
 )
 
 type DownloadRequest struct {
@@ -61,14 +63,34 @@ type DownloadClient struct {
 	incomingDownloadRequests chan DownloadRequest
 	inflightDownloadRequests chan DownloadRequest
 	inflightModules          utils.ConcurrentMap[string, bool]
-	skippedRequests          utils.ConcurrentCounter[int]
-	failedRequests           utils.ConcurrentCounter[int]
-	completedRequests        utils.ConcurrentCounter[int]
-	retriedRequests          utils.ConcurrentCounter[int]
 	completedModules         utils.ConcurrentMap[string, bool]
 	numConcurrentProcessors  int
 	skipPseudoVersions       bool
 	skipMaxTsWrite           bool
+	stats                    stats
+}
+
+type stats struct {
+	skippedRequests   utils.ConcurrentCounter[int]
+	failedRequests    utils.ConcurrentCounter[int]
+	completedRequests utils.ConcurrentCounter[int]
+	retriedRequests   utils.ConcurrentCounter[int]
+}
+
+func newStats() stats {
+	return stats{
+		skippedRequests:   utils.NewConcurrentCounter[int](),
+		failedRequests:    utils.NewConcurrentCounter[int](),
+		completedRequests: utils.NewConcurrentCounter[int](),
+		retriedRequests:   utils.NewConcurrentCounter[int](),
+	}
+}
+
+func (s *stats) Reset() {
+	s.failedRequests.Reset()
+	s.retriedRequests.Reset()
+	s.skippedRequests.Reset()
+	s.completedRequests.Reset()
 }
 
 func NewDownloadClient() *DownloadClient {
@@ -81,12 +103,9 @@ func NewDownloadClient() *DownloadClient {
 		numConcurrentProcessors:  1,
 		skipPseudoVersions:       false,
 		skipMaxTsWrite:           false,
-		skippedRequests:          utils.NewConcurrentCounter[int](),
-		failedRequests:           utils.NewConcurrentCounter[int](),
-		completedRequests:        utils.NewConcurrentCounter[int](),
-		retriedRequests:          utils.NewConcurrentCounter[int](),
 		completedModules:         utils.NewConcurrentMap[string, bool](),
 		inflightModules:          utils.NewConcurrentMap[string, bool](),
+		stats:                    newStats(),
 	}
 }
 
@@ -151,8 +170,17 @@ func (c *DownloadClient) setInflight(req DownloadRequest) {
 	c.inflightModules.Set(req.Module.String(), true)
 }
 
-func (c *DownloadClient) completeInflight(req DownloadRequest, counter *utils.ConcurrentCounter[int]) {
-	counter.Increment()
+func (c *DownloadClient) completeInflight(req DownloadRequest) {
+	switch req.Status {
+	case DownloadStatusCompleted:
+		c.stats.completedRequests.Increment()
+	case DownloadStatusFailed:
+		c.stats.failedRequests.Increment()
+	case DownloadStatusSkipped:
+		c.stats.skippedRequests.Increment()
+	default:
+		slog.Error("unmapped state", "requestStatus", req.Status)
+	}
 	c.inflightModules.Delete(req.Module.String())
 	<-c.inflightDownloadRequests
 }
@@ -168,23 +196,27 @@ func (c *DownloadClient) ProcessIncomingDownloadRequests() {
 
 				c.setInflight(req)
 				if !req.Required && c.skipPseudoVersions && req.Module.IsPseudoVersion() {
-					c.completeInflight(req, &c.skippedRequests)
+					req.Status = DownloadStatusSkipped
+					c.completeInflight(req)
 					continue
 				}
 				if err := c.Download(req); err != nil {
 					if req.Retries > 0 {
 						req.Retries -= 1
 						go func() { c.incomingDownloadRequests <- req }()
-						c.completeInflight(req, &c.retriedRequests)
+						req.Status = DownloadStatusSkipped
+						c.completeInflight(req)
 						continue
 					}
 					slog.Error("download processor:", "modPath", req.Module.Path, "modVersion", req.Module.Version, "err", err)
-					c.completeInflight(req, &c.failedRequests)
+					req.Status = DownloadStatusFailed
+					c.completeInflight(req)
 					continue
 				}
 
 				c.completedModules.Set(req.Module.String(), true)
-				c.completeInflight(req, &c.completedRequests)
+				req.Status = DownloadStatusCompleted
+				c.completeInflight(req)
 			}
 		}()
 	}
@@ -196,10 +228,10 @@ func (c *DownloadClient) AwaitInflight() {
 		slog.Info(m,
 			"queued", len(c.incomingDownloadRequests),
 			"inflight", len(c.inflightDownloadRequests),
-			"skipped", c.skippedRequests.Value(),
-			"retried", c.retriedRequests.Value(),
-			"failed", c.failedRequests.Value(),
-			"completed", c.completedRequests.Value(),
+			"skipped", c.stats.skippedRequests.Value(),
+			"retried", c.stats.retriedRequests.Value(),
+			"failed", c.stats.failedRequests.Value(),
+			"completed", c.stats.completedRequests.Value(),
 		)
 	}
 	for len(c.incomingDownloadRequests) != 0 || len(c.inflightDownloadRequests) != 0 {
@@ -207,10 +239,7 @@ func (c *DownloadClient) AwaitInflight() {
 		time.Sleep(time.Duration(1) * time.Second)
 	}
 	msg("done")
-	c.failedRequests.Reset()
-	c.retriedRequests.Reset()
-	c.skippedRequests.Reset()
-	c.completedRequests.Reset()
+	c.stats.Reset()
 }
 
 // Cleanup cleans up in-flight artifacts and/or downloads.
