@@ -68,6 +68,7 @@ type DownloadClient struct {
 	skipPseudoVersions       bool
 	skipMaxTsWrite           bool
 	stats                    stats
+	currentBatch             *Modules
 }
 
 type stats struct {
@@ -145,19 +146,10 @@ func (c *DownloadClient) EnqueueBatch(mods Modules) {
 	if err := createDirIfNotExist(c.tempDir); err != nil {
 		slog.Error(err.Error())
 	}
+	c.currentBatch = &mods
 
 	for _, mod := range mods {
 		c.enqueueMod(mod, false)
-	}
-
-	// TODO: Refactor me into a separate function and call separately
-	if !c.skipMaxTsWrite {
-		maxTs := mods.GetMaxTs()
-		maxTsFile := path.Join(c.maxTsDir)
-		ts := strftime.Format("%Y-%m-%dT%H:%M:%S.%fZ", maxTs)
-		if err := os.WriteFile(maxTsFile, []byte(ts), 0644); err != nil {
-			slog.Error("failed to write minTs to file MAX_TS:", "err", err)
-		}
 	}
 }
 
@@ -240,6 +232,18 @@ func (c *DownloadClient) AwaitInflight() {
 	}
 	msg("done")
 	c.stats.Reset()
+
+	if !c.skipMaxTsWrite {
+		if c.currentBatch == nil {
+			slog.Error("failed to update MAX_TS, no currentBatch to get timestamp from")
+		}
+		maxTs := c.currentBatch.GetMaxTs()
+		maxTsFile := path.Join(c.maxTsDir)
+		ts := strftime.Format("%Y-%m-%dT%H:%M:%S.%fZ", maxTs)
+		if err := os.WriteFile(maxTsFile, []byte(ts), 0644); err != nil {
+			slog.Error("failed to write minTs to file MAX_TS:", "err", err)
+		}
+	}
 }
 
 // Cleanup cleans up in-flight artifacts and/or downloads.
