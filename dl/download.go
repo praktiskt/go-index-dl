@@ -170,6 +170,8 @@ func (c *DownloadClient) completeInflight(req DownloadRequest) {
 		c.stats.failedRequests.Increment()
 	case DownloadStatusSkipped:
 		c.stats.skippedRequests.Increment()
+	case DownloadStatusRetry:
+		c.stats.retriedRequests.Increment()
 	default:
 		slog.Error("unmapped state", "requestStatus", req.Status)
 	}
@@ -196,7 +198,7 @@ func (c *DownloadClient) ProcessIncomingDownloadRequests() {
 					if req.Retries > 0 {
 						req.Retries -= 1
 						go func() { c.incomingDownloadRequests <- req }()
-						req.Status = DownloadStatusSkipped
+						req.Status = DownloadStatusRetry
 						c.completeInflight(req)
 						continue
 					}
