@@ -32,9 +32,6 @@ type DownloadRequest struct {
 	// FinishedTimestamp represents the time when the request was finished, or failed.
 	FinishedTimestamp time.Time
 
-	// Status represents the current status of the DownloadRequest
-	Status DownloadStatus
-
 	// Module represents one entry at https://index.golang.org/index?limit=1
 	Module Module
 
@@ -49,7 +46,6 @@ func NewDownloadRequest(mod Module, required bool) DownloadRequest {
 	// TODO: allow setting retries
 	return DownloadRequest{
 		CreatedTimestamp: time.Now(),
-		Status:           DownloadStatusPending,
 		Module:           mod,
 		Required:         required,
 		Retries:          10,
@@ -162,8 +158,8 @@ func (c *DownloadClient) setInflight(req DownloadRequest) {
 	c.inflightModules.Set(req.Module.String(), true)
 }
 
-func (c *DownloadClient) completeInflight(req DownloadRequest) {
-	switch req.Status {
+func (c *DownloadClient) completeInflight(req DownloadRequest, status DownloadStatus) {
+	switch status {
 	case DownloadStatusCompleted:
 		c.stats.completedRequests.Increment()
 	case DownloadStatusFailed:
@@ -173,7 +169,7 @@ func (c *DownloadClient) completeInflight(req DownloadRequest) {
 	case DownloadStatusRetry:
 		c.stats.retriedRequests.Increment()
 	default:
-		slog.Error("unmapped state", "requestStatus", req.Status)
+		slog.Error("unmapped state", "requestStatus", status)
 	}
 	c.inflightModules.Delete(req.Module.String())
 	<-c.inflightDownloadRequests
@@ -190,27 +186,23 @@ func (c *DownloadClient) ProcessIncomingDownloadRequests() {
 
 				c.setInflight(req)
 				if !req.Required && c.skipPseudoVersions && req.Module.IsPseudoVersion() {
-					req.Status = DownloadStatusSkipped
-					c.completeInflight(req)
+					c.completeInflight(req, DownloadStatusSkipped)
 					continue
 				}
 				if err := c.Download(req); err != nil {
 					if req.Retries > 0 {
 						req.Retries -= 1
 						go func() { c.incomingDownloadRequests <- req }()
-						req.Status = DownloadStatusRetry
-						c.completeInflight(req)
+						c.completeInflight(req, DownloadStatusRetry)
 						continue
 					}
 					slog.Error("download processor:", "modPath", req.Module.Path, "modVersion", req.Module.Version, "err", err)
-					req.Status = DownloadStatusFailed
-					c.completeInflight(req)
+					c.completeInflight(req, DownloadStatusFailed)
 					continue
 				}
 
 				c.completedModules.Set(req.Module.String(), true)
-				req.Status = DownloadStatusCompleted
-				c.completeInflight(req)
+				c.completeInflight(req, DownloadStatusCompleted)
 			}
 		}()
 	}
