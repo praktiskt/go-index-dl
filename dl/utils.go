@@ -58,6 +58,10 @@ func downloadFile(filepath string, url string, tempDir string, skipIfExists bool
 		return err
 	}
 
+	if err := os.Chmod(filepath, 0644); err != nil {
+		return err
+	}
+
 	return nil
 }
 
