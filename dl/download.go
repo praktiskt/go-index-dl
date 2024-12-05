@@ -6,9 +6,10 @@ import (
 	"log/slog"
 	"os"
 	"path"
-	"praktiskt/go-index-dl/utils"
 	"strings"
 	"time"
+
+	"praktiskt/go-index-dl/utils"
 
 	"github.com/ncruces/go-strftime"
 	"golang.org/x/mod/modfile"
@@ -234,7 +235,7 @@ func (c *DownloadClient) AwaitInflight() {
 		maxTs := c.currentBatch.GetMaxTs()
 		maxTsFile := path.Join(c.maxTsDir)
 		ts := strftime.Format("%Y-%m-%dT%H:%M:%S.%fZ", maxTs)
-		if err := os.WriteFile(maxTsFile, []byte(ts), 0644); err != nil {
+		if err := os.WriteFile(maxTsFile, []byte(ts), 0o644); err != nil {
 			slog.Error("failed to write minTs to file MAX_TS:", "err", err)
 		}
 	}
@@ -269,9 +270,9 @@ func (c *DownloadClient) Download(req DownloadRequest) error {
 	}
 
 	modURL := req.Module.BaseURL() + ".mod"
-	modPath := path.Join(cacheDir, "mod")
+	modPath := path.Join(cacheDir, req.Module.Version+".mod")
 	slog.Debug("downloading", "url", modURL, "targetDir", modPath)
-	err = downloadFile(modPath, modURL, c.tempDir, false)
+	err = downloadFile(modPath, modURL, c.tempDir, true)
 	if err != nil {
 		if strings.Contains(err.Error(), `invalid escaped module path`) {
 			return nil
