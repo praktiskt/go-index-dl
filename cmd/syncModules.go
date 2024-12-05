@@ -3,8 +3,9 @@ package cmd
 import (
 	"log/slog"
 	"path"
-	"praktiskt/go-index-dl/dl"
 	"time"
+
+	"praktiskt/go-index-dl/dl"
 
 	"github.com/spf13/cobra"
 )
@@ -15,6 +16,7 @@ var syncModulesCmdConfig = struct {
 	outputDir            string
 	tempDir              string
 	skipPseudoVersions   bool
+	exitOnEnd            bool
 }{}
 
 var syncModulesCmd = &cobra.Command{
@@ -49,6 +51,10 @@ determine where to collect modules from.`,
 				continue
 			}
 			if len(mods) < syncModulesCmdConfig.batchSize {
+				if syncModulesCmdConfig.exitOnEnd {
+					slog.Info("the end has been reached, exiting")
+					break
+				}
 				slog.Info("very few modules collected, sleeping for 60 seconds before trying again")
 				time.Sleep(time.Duration(60) * time.Second)
 				continue
@@ -68,4 +74,5 @@ func init() {
 	syncModulesCmd.Flags().StringVarP(&syncModulesCmdConfig.outputDir, "output-dir", "o", dl.OUTPUT_DIR, "the absolute or relative path to the output directory (can also be set with OUTPUT_DIR)")
 	syncModulesCmd.Flags().StringVar(&syncModulesCmdConfig.tempDir, "temp-dir", path.Join(dl.OUTPUT_DIR, "tmp"), "the place to store temporary artifacts in")
 	syncModulesCmd.Flags().BoolVar(&syncModulesCmdConfig.skipPseudoVersions, "skip-pseudo-versions", true, "skip pseudo versions unless they are required by a non-pseudo-version, see https://go.dev/ref/mod#glos-pseudo-version")
+	syncModulesCmd.Flags().BoolVar(&syncModulesCmdConfig.exitOnEnd, "exit-on-end", false, "when reaching 'the end' of the current listing, exit the program")
 }
