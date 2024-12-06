@@ -58,7 +58,6 @@ type DownloadClient struct {
 	tempDir                  string
 	maxTsDir                 string
 	incomingDownloadRequests chan DownloadRequest
-	inflightDownloadRequests chan DownloadRequest
 	inflightModules          utils.ConcurrentMap[string, bool]
 	completedModules         utils.ConcurrentMap[string, bool]
 	numConcurrentProcessors  int
@@ -69,6 +68,7 @@ type DownloadClient struct {
 }
 
 type stats struct {
+	inflightRequests  utils.ConcurrentCounter[int]
 	skippedRequests   utils.ConcurrentCounter[int]
 	failedRequests    utils.ConcurrentCounter[int]
 	completedRequests utils.ConcurrentCounter[int]
@@ -77,6 +77,7 @@ type stats struct {
 
 func newStats() stats {
 	return stats{
+		inflightRequests:  utils.NewConcurrentCounter[int](),
 		skippedRequests:   utils.NewConcurrentCounter[int](),
 		failedRequests:    utils.NewConcurrentCounter[int](),
 		completedRequests: utils.NewConcurrentCounter[int](),
@@ -94,7 +95,6 @@ func (s *stats) Reset() {
 func NewDownloadClient() *DownloadClient {
 	return &DownloadClient{
 		incomingDownloadRequests: make(chan DownloadRequest, 1),
-		inflightDownloadRequests: make(chan DownloadRequest, 1),
 		outputDir:                OUTPUT_DIR,
 		tempDir:                  path.Join(OUTPUT_DIR, "tmp"),
 		maxTsDir:                 path.Join(OUTPUT_DIR, "MAX_TS"),
@@ -125,7 +125,6 @@ func (c *DownloadClient) WithNumConcurrentProcessors(cnt int) *DownloadClient {
 
 func (c *DownloadClient) WithRequestCapacity(cnt int) *DownloadClient {
 	c.incomingDownloadRequests = make(chan DownloadRequest, cnt)
-	c.inflightDownloadRequests = make(chan DownloadRequest, cnt)
 	return c
 }
 
@@ -155,7 +154,7 @@ func (c *DownloadClient) enqueueMod(mod Module, required bool) {
 }
 
 func (c *DownloadClient) setInflight(req DownloadRequest) {
-	c.inflightDownloadRequests <- req
+	c.stats.inflightRequests.Increment()
 	c.inflightModules.Set(req.Module.String(), true)
 }
 
@@ -173,7 +172,7 @@ func (c *DownloadClient) completeInflight(req DownloadRequest, status DownloadSt
 		slog.Error("unmapped state", "requestStatus", status)
 	}
 	c.inflightModules.Delete(req.Module.String())
-	<-c.inflightDownloadRequests
+	c.stats.inflightRequests.Decrement()
 }
 
 // ProcessIncomingDownloadRequests blocks the thread and processes incoming DownloadRequests
@@ -214,14 +213,14 @@ func (c *DownloadClient) AwaitInflight() {
 	msg := func(m string) {
 		slog.Info(m,
 			"queued", len(c.incomingDownloadRequests),
-			"inflight", len(c.inflightDownloadRequests),
+			"inflight", c.stats.inflightRequests.Value(),
 			"skipped", c.stats.skippedRequests.Value(),
 			"retried", c.stats.retriedRequests.Value(),
 			"failed", c.stats.failedRequests.Value(),
 			"completed", c.stats.completedRequests.Value(),
 		)
 	}
-	for len(c.incomingDownloadRequests) != 0 || len(c.inflightDownloadRequests) != 0 {
+	for len(c.incomingDownloadRequests) != 0 || c.stats.inflightRequests.Value() != 0 {
 		msg("awaitInflight")
 		time.Sleep(time.Duration(1) * time.Second)
 	}
