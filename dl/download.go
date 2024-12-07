@@ -231,7 +231,7 @@ func (c *DownloadClient) AwaitInflight() {
 			"completed", c.stats.completedRequests.Value(),
 		)
 	}
-	for c.stats.queuedRequests.Value() != 0 || c.stats.inflightRequests.Value() != 0 {
+	for c.stats.queuedRequests.Value() != 0 && c.stats.inflightRequests.Value() != 0 {
 		msg("awaitInflight")
 		time.Sleep(time.Duration(1) * time.Second)
 	}
