@@ -73,6 +73,7 @@ type stats struct {
 	failedRequests    utils.ConcurrentCounter[int]
 	completedRequests utils.ConcurrentCounter[int]
 	retriedRequests   utils.ConcurrentCounter[int]
+	queuedRequests    utils.ConcurrentCounter[int]
 }
 
 func newStats() stats {
@@ -82,6 +83,7 @@ func newStats() stats {
 		failedRequests:    utils.NewConcurrentCounter[int](),
 		completedRequests: utils.NewConcurrentCounter[int](),
 		retriedRequests:   utils.NewConcurrentCounter[int](),
+		queuedRequests:    utils.NewConcurrentCounter[int](),
 	}
 }
 
@@ -156,12 +158,13 @@ func (c *DownloadClient) EnqueueBatch(mods Modules) {
 }
 
 func (c *DownloadClient) enqueueMod(mod Module, required bool) {
+	c.stats.queuedRequests.Increment()
 	c.incomingDownloadRequests <- NewDownloadRequest(mod, required, c.numRetries)
 }
 
 func (c *DownloadClient) setInflight(req DownloadRequest) {
-	c.inflightModules.Set(req.Module.String())
 	c.stats.inflightRequests.Increment()
+	c.inflightModules.Set(req.Module.String())
 }
 
 func (c *DownloadClient) completeInflight(req DownloadRequest, status DownloadStatus) {
@@ -186,6 +189,8 @@ func (c *DownloadClient) ProcessIncomingDownloadRequests() {
 	for range c.numConcurrentProcessors {
 		go func() {
 			for req := range c.incomingDownloadRequests {
+				c.stats.queuedRequests.Decrement()
+
 				if c.completedModules.Exists(req.Module.String()) || c.inflightModules.Exists(req.Module.String()) {
 					continue
 				}
@@ -226,7 +231,7 @@ func (c *DownloadClient) AwaitInflight() {
 			"completed", c.stats.completedRequests.Value(),
 		)
 	}
-	for len(c.incomingDownloadRequests) != 0 || c.stats.inflightRequests.Value() != 0 {
+	for c.stats.queuedRequests.Value() != 0 || c.stats.inflightRequests.Value() != 0 {
 		msg("awaitInflight")
 		time.Sleep(time.Duration(1) * time.Second)
 	}
