@@ -15,6 +15,7 @@ var syncModulesCmdConfig = struct {
 	batchSize            int
 	outputDir            string
 	tempDir              string
+	numRetries           int
 	skipPseudoVersions   bool
 	exitOnEnd            bool
 }{}
@@ -71,6 +72,7 @@ func init() {
 	syncCmd.AddCommand(syncModulesCmd)
 	syncModulesCmd.Flags().IntVarP(&syncModulesCmdConfig.batchSize, "batch-size", "b", 2000, "batch these many requests at most, should a batch fail sync will restart from the last successful batch (min=2, max=2000)")
 	syncModulesCmd.Flags().IntVarP(&syncModulesCmdConfig.concurrentProcessors, "concurrent-processors", "c", 10, "number of concurrent processors processing requests, reducing it will reduce network i/o")
+	syncModulesCmd.Flags().IntVar(&syncModulesCmdConfig.numRetries, "num-retries", 10, "number of times to retry a module download if it fails")
 	syncModulesCmd.Flags().StringVarP(&syncModulesCmdConfig.outputDir, "output-dir", "o", dl.OUTPUT_DIR, "the absolute or relative path to the output directory (can also be set with OUTPUT_DIR)")
 	syncModulesCmd.Flags().StringVar(&syncModulesCmdConfig.tempDir, "temp-dir", path.Join(dl.OUTPUT_DIR, "tmp"), "the place to store temporary artifacts in")
 	syncModulesCmd.Flags().BoolVar(&syncModulesCmdConfig.skipPseudoVersions, "skip-pseudo-versions", true, "skip pseudo versions unless they are required by a non-pseudo-version, see https://go.dev/ref/mod#glos-pseudo-version")

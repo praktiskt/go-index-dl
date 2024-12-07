@@ -43,13 +43,12 @@ type DownloadRequest struct {
 	Retries int
 }
 
-func NewDownloadRequest(mod Module, required bool) DownloadRequest {
-	// TODO: allow setting retries
+func NewDownloadRequest(mod Module, required bool, retries int) DownloadRequest {
 	return DownloadRequest{
 		CreatedTimestamp: time.Now(),
 		Module:           mod,
 		Required:         required,
-		Retries:          10,
+		Retries:          retries,
 	}
 }
 
@@ -64,6 +63,7 @@ type DownloadClient struct {
 	skipPseudoVersions       bool
 	skipMaxTsWrite           bool
 	stats                    stats
+	numRetries               int
 	currentBatch             *Modules
 }
 
@@ -103,6 +103,7 @@ func NewDownloadClient() *DownloadClient {
 		skipMaxTsWrite:           false,
 		completedModules:         utils.NewConcurrentSet[string](),
 		inflightModules:          utils.NewConcurrentSet[string](),
+		numRetries:               10,
 		stats:                    newStats(),
 	}
 }
@@ -138,6 +139,11 @@ func (c *DownloadClient) WithSkipMaxTsWrite(setting bool) *DownloadClient {
 	return c
 }
 
+func (c *DownloadClient) WithPerModuleRetries(setting int) *DownloadClient {
+	c.numRetries = setting
+	return c
+}
+
 func (c *DownloadClient) EnqueueBatch(mods Modules) {
 	if err := createDirIfNotExist(c.tempDir); err != nil {
 		slog.Error(err.Error())
@@ -150,7 +156,7 @@ func (c *DownloadClient) EnqueueBatch(mods Modules) {
 }
 
 func (c *DownloadClient) enqueueMod(mod Module, required bool) {
-	c.incomingDownloadRequests <- NewDownloadRequest(mod, required)
+	c.incomingDownloadRequests <- NewDownloadRequest(mod, required, c.numRetries)
 }
 
 func (c *DownloadClient) setInflight(req DownloadRequest) {

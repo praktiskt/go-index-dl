@@ -18,7 +18,7 @@ func TestDownloadClient(t *testing.T) {
 		Version:   "v0.3.0",
 		Timestamp: ts,
 	}
-	req := NewDownloadRequest(mod, true)
+	req := NewDownloadRequest(mod, true, 5)
 
 	c := NewDownloadClient()
 	assert.Nil(t, c.Download(req))
