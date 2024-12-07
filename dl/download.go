@@ -164,6 +164,7 @@ func (c *DownloadClient) enqueueMod(mod Module, required bool) {
 
 func (c *DownloadClient) setInflight(req DownloadRequest) {
 	c.stats.inflightRequests.Increment()
+	c.stats.queuedRequests.Decrement()
 	c.inflightModules.Set(req.Module.String())
 }
 
@@ -189,10 +190,9 @@ func (c *DownloadClient) ProcessIncomingDownloadRequests() {
 	for range c.numConcurrentProcessors {
 		go func() {
 			for req := range c.incomingDownloadRequests {
-				c.stats.queuedRequests.Decrement()
-
 				if c.completedModules.Exists(req.Module.String()) || c.inflightModules.Exists(req.Module.String()) {
 					// TODO: We should probably log skipping these somehow.
+					c.stats.queuedRequests.Decrement()
 					continue
 				}
 
