@@ -63,7 +63,6 @@ determine where to collect modules from.`,
 			dlc.AwaitInflight()
 			dlc.Cleanup()
 			slog.Info("finished writing batch", "maxTs", mods.GetMaxTs().String())
-
 		}
 	},
 }
