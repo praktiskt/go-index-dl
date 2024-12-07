@@ -58,8 +58,8 @@ type DownloadClient struct {
 	tempDir                  string
 	maxTsDir                 string
 	incomingDownloadRequests chan DownloadRequest
-	inflightModules          utils.ConcurrentMap[string, bool]
-	completedModules         utils.ConcurrentMap[string, bool]
+	inflightModules          utils.ConcurrentSet[string]
+	completedModules         utils.ConcurrentSet[string]
 	numConcurrentProcessors  int
 	skipPseudoVersions       bool
 	skipMaxTsWrite           bool
@@ -101,8 +101,8 @@ func NewDownloadClient() *DownloadClient {
 		numConcurrentProcessors:  1,
 		skipPseudoVersions:       false,
 		skipMaxTsWrite:           false,
-		completedModules:         utils.NewConcurrentMap[string, bool](),
-		inflightModules:          utils.NewConcurrentMap[string, bool](),
+		completedModules:         utils.NewConcurrentSet[string](),
+		inflightModules:          utils.NewConcurrentSet[string](),
 		stats:                    newStats(),
 	}
 }
@@ -154,8 +154,8 @@ func (c *DownloadClient) enqueueMod(mod Module, required bool) {
 }
 
 func (c *DownloadClient) setInflight(req DownloadRequest) {
+	c.inflightModules.Set(req.Module.String())
 	c.stats.inflightRequests.Increment()
-	c.inflightModules.Set(req.Module.String(), true)
 }
 
 func (c *DownloadClient) completeInflight(req DownloadRequest, status DownloadStatus) {
@@ -201,7 +201,7 @@ func (c *DownloadClient) ProcessIncomingDownloadRequests() {
 					continue
 				}
 
-				c.completedModules.Set(req.Module.String(), true)
+				c.completedModules.Set(req.Module.String())
 				c.completeInflight(req, DownloadStatusCompleted)
 			}
 		}()
@@ -298,7 +298,7 @@ func (c *DownloadClient) Download(req DownloadRequest) error {
 	go func(mod *modfile.File) {
 		for _, req := range mod.Require {
 			newMod := Module{Path: req.Mod.Path, Version: req.Mod.Version}
-			c.incomingDownloadRequests <- NewDownloadRequest(newMod, true)
+			c.enqueueMod(newMod, true)
 		}
 	}(mod)
 
