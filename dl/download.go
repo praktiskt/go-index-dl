@@ -203,7 +203,10 @@ func (c *DownloadClient) ProcessIncomingDownloadRequests() {
 				if err := c.Download(req); err != nil {
 					if req.Retries > 0 {
 						req.Retries -= 1
-						go func() { c.incomingDownloadRequests <- req }()
+						go func() {
+							c.stats.queuedRequests.Increment()
+							c.incomingDownloadRequests <- req
+						}()
 						c.completeInflight(req, DownloadStatusRetry)
 						continue
 					}
@@ -223,7 +226,7 @@ func (c *DownloadClient) ProcessIncomingDownloadRequests() {
 func (c *DownloadClient) AwaitInflight() {
 	msg := func(m string) {
 		slog.Info(m,
-			"queued", len(c.incomingDownloadRequests),
+			"queued", c.stats.queuedRequests.Value(),
 			"inflight", c.stats.inflightRequests.Value(),
 			"skipped", c.stats.skippedRequests.Value(),
 			"retried", c.stats.retriedRequests.Value(),
@@ -231,7 +234,7 @@ func (c *DownloadClient) AwaitInflight() {
 			"completed", c.stats.completedRequests.Value(),
 		)
 	}
-	for c.stats.queuedRequests.Value() != 0 && c.stats.inflightRequests.Value() != 0 {
+	for c.stats.queuedRequests.Value() != 0 || c.stats.inflightRequests.Value() != 0 {
 		msg("awaitInflight")
 		time.Sleep(time.Duration(1) * time.Second)
 	}
