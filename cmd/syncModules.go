@@ -38,7 +38,8 @@ determine where to collect modules from.`,
 			WithOutputDir(syncModulesCmdConfig.outputDir).
 			WithTempDir(syncModulesCmdConfig.tempDir).
 			WithRequestCapacity(syncModulesCmdConfig.batchSize).
-			WithSkipPseudoVersions(syncModulesCmdConfig.skipPseudoVersions)
+			WithSkipPseudoVersions(syncModulesCmdConfig.skipPseudoVersions).
+			WithPerModuleRetries(syncModulesCmdConfig.numRetries)
 		defer dlc.Cleanup()
 		go dlc.ProcessIncomingDownloadRequests()
 
