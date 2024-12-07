@@ -204,7 +204,7 @@ func (c *DownloadClient) ProcessIncomingDownloadRequests() {
 					if req.Retries > 0 {
 						req.Retries -= 1
 						go func() {
-							c.setInflight(req)
+							c.stats.queuedRequests.Increment()
 							c.incomingDownloadRequests <- req
 						}()
 						c.completeInflight(req, DownloadStatusRetry)
