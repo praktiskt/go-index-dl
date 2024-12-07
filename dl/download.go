@@ -192,6 +192,7 @@ func (c *DownloadClient) ProcessIncomingDownloadRequests() {
 				c.stats.queuedRequests.Decrement()
 
 				if c.completedModules.Exists(req.Module.String()) || c.inflightModules.Exists(req.Module.String()) {
+					// TODO: We should probably log skipping these somehow.
 					continue
 				}
 
